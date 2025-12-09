@@ -1,10 +1,25 @@
 class TileMap {
-    constructor(w, h) {
+    constructor(w, h, type = 'world') {
         this.w = w; this.h = h;
+        this.type = type;
         this.data = [];
         this.gen();
     }
     gen() {
+        if (this.type === 'home') {
+            for (let y = 0; y < this.h; y++) {
+                let row = [];
+                for (let x = 0; x < this.w; x++) {
+                    let solid = (x === 0 || x === this.w - 1 || y === 0 || y === this.h - 1);
+                    // Leave gap for door
+                    if (y === this.h - 1 && x === Math.floor(this.w / 2)) solid = false;
+                    row.push({ type: solid ? 'stone' : 'floor', solid, hp: solid ? 999 : 0, maxHp: 999, variant: 0 });
+                }
+                this.data.push(row);
+            }
+            return;
+        }
+
         for (let y = 0; y < this.h; y++) {
             let row = [];
             for (let x = 0; x < this.w; x++) {
@@ -42,7 +57,8 @@ class TileMap {
         let tx = Math.floor(x / TILE_SIZE), ty = Math.floor(y / TILE_SIZE);
         if (tx < 0 || tx >= this.w || ty < 0 || ty >= this.h) return false;
         let t = this.data[ty][tx];
-        if (t.solid && t.hp > 0) {
+        // Indestructible walls check (hp < 900)
+        if (t.solid && t.hp > 0 && t.hp < 900) {
             t.hp -= dmg;
             Game.addFloater(x, y, `-${Math.floor(dmg)}`, '#fff', 8);
             if (t.hp <= 0) {
@@ -73,7 +89,7 @@ class TileMap {
                 }
                 else {
                     const gCols = ['#202025', '#25252a', '#1e1e22'];
-                    ctx.fillStyle = gCols[t.variant];
+                    ctx.fillStyle = gCols[t.variant] || '#222';
                 }
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
 
@@ -100,6 +116,26 @@ class Entity {
         if (this.type === 'bed') {
             ctx.fillStyle = '#c0392b'; ctx.fillRect(this.x, this.y, this.w, this.h);
             ctx.fillStyle = '#eee'; ctx.fillRect(this.x + 5, this.y + 5, this.w - 10, 15);
+        } else if (this.type === 'house') {
+            // Draw building exterior - Simple House Sprite
+            ctx.fillStyle = '#795548'; // Wood color
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            // Roof
+            ctx.fillStyle = '#d35400';
+            ctx.beginPath();
+            ctx.moveTo(this.x - 5, this.y);
+            ctx.lineTo(this.x + this.w / 2, this.y - 30);
+            ctx.lineTo(this.x + this.w + 5, this.y);
+            ctx.fill();
+            // Door
+            ctx.fillStyle = '#3e2723';
+            ctx.fillRect(this.x + this.w / 2 - 10, this.y + this.h - 25, 20, 25);
+        } else if (this.type === 'exit') {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px Arial';
+            ctx.fillText("EXIT", this.x + 5, this.y + 20);
         }
     }
 }
@@ -405,12 +441,34 @@ class Player extends Entity {
     }
 
     interact() {
+        // Interact with entities
+        let closest = null;
+        let dist = 1000;
         Game.entities.forEach(e => {
-            if (e.type === 'item' && Math.hypot(e.x - this.x, e.y - this.y) < 45) {
-                e.active = false;
-                this.addItem(e.id, 1);
-            }
+            // Use Center for distance check
+            let ex = e.x + (e.w || 0) / 2;
+            let ey = e.y + (e.h || 0) / 2;
+            let d = Math.hypot(ex - this.x, ey - this.y);
+
+            // Interaction range
+            let range = 60;
+            if (e.type === 'house') range = 100; // Larger range for house
+
+            if (d < range && d < dist) { closest = e; dist = d; }
         });
+
+        if (closest) {
+            if (closest.type === 'item') {
+                closest.active = false;
+                this.addItem(closest.id, 1);
+            } else if (closest.type === 'house') {
+                Game.enterHome();
+            } else if (closest.type === 'exit') {
+                Game.exitHome();
+            } else if (closest.type === 'bed') {
+                this.rest();
+            }
+        }
     }
 
     useSkill(i) {
@@ -463,37 +521,13 @@ class Player extends Entity {
     }
 
     rest() {
-        let msg = "You meditate upon the Dao.<br>";
-        let gains = [];
-        for (let s in this.stress) {
-            if (this.stress[s] > 10) {
-                let g = Math.floor(this.stress[s] / 10);
-                this.stats[s] += g; this.stress[s] = 0;
-                if (g > 0) gains.push(`${s.toUpperCase()} +${g}`);
-            }
+        if (!Game.atHome) {
+            Game.addLog("Can only rest at home!", "warn");
+            return;
         }
-        if (gains.length) msg += "<span style='color:#2ecc71'>" + gains.join(', ') + "</span><br>";
+        if (Game.sleeping) return;
 
-        let next = REALMS[this.realm + 1];
-        let score = this.stats.str + this.stats.def + this.stats.spd + this.stats.wis;
-        if (next && score >= next.req) {
-            this.realm++;
-            msg += `<br><strong style='color:#f1c40f'>BREAKTHROUGH: ${next.name}</strong>`;
-            this.vitals.maxHp += 50; this.vitals.maxQi += 20;
-            if (this.realm === 4) Game.spawnBoss();
-        }
-
-        Game.showModal("Rest & Cultivation", msg, () => {
-            this.vitals.hp = this.vitals.maxHp;
-            this.vitals.stam = this.vitals.maxStam;
-            this.vitals.qi = this.vitals.maxQi;
-            Game.gameTime = 6; Game.day++;
-            Game.saveGame();
-
-            for (let i = 0; i < 3; i++) {
-                if (this.realm >= i + 1) document.getElementById(`skill-${i + 1}`).classList.add('unlocked');
-            }
-        });
+        Game.startSleep();
     }
 
     addStress(s, v) { this.stress[s] += (v * 12) / this.stats[s]; }

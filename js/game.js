@@ -11,6 +11,14 @@ const Game = {
     day: 1,
     paused: false,
     bossSpawned: false,
+    atHome: false,
+    sleeping: false,
+    sleepTimer: 0,
+
+    // Maps & Persistence
+    maps: { world: null, home: null },
+    worldEntities: [],
+    homeEntities: [],
 
     // Systems
     camera: { x: 0, y: 0, targetX: 0, targetY: 0, shake: 0 },
@@ -32,8 +40,12 @@ const Game = {
         // Controls
         window.addEventListener('keydown', e => {
             this.input.keys[e.key.toLowerCase()] = true;
+            if (this.sleeping) {
+                if (e.key === 'w' || e.key === 'a' || e.key === 's' || e.key === 'd') this.stopSleep();
+                return;
+            }
             if (e.key === 'i') this.toggleInventory();
-            if (e.key === 'r') this.player.rest();
+            if (e.key === 'r') this.player.rest(); // Now calls triggers sleep
             if (e.key === '1') this.player.useSkill(0);
             if (e.key === '2') this.player.useSkill(1);
             if (e.key === '3') this.player.useSkill(2);
@@ -52,8 +64,6 @@ const Game = {
         });
         this.canvas.addEventListener('mousedown', () => { this.input.mouse.down = true; this.input.mouse.click = true; });
         this.canvas.addEventListener('mouseup', () => this.input.mouse.down = false);
-
-        // Inventory Tooltip Listeners handled in render
 
         // Load or Start
         const save = localStorage.getItem(SAVE_KEY);
@@ -90,47 +100,175 @@ const Game = {
 
     saveGame() {
         if (!this.player) return;
-        const data = { version: '5.5', player: this.player.serialize(), day: this.day, time: this.gameTime, boss: this.bossSpawned };
+        // Only allow save if in home? or anywhere?
+        // Let's stick effectively to "Rest saves game", which is now only at home.
+        // But we preserve the regular save mechanism for now.
+        const data = {
+            version: '5.5',
+            player: this.player.serialize(),
+            day: this.day,
+            time: this.gameTime,
+            boss: this.bossSpawned,
+            atHome: this.atHome
+        };
         localStorage.setItem(SAVE_KEY, JSON.stringify(data));
         this.addLog("Game Saved.", "info");
     },
 
     loadGame(data) {
+        // For simplicity, we just reload the world and place player.
+        // Complex persistence of entities is skipped in this basic version.
         this.loadWorld(false);
         this.day = data.day;
         this.gameTime = data.time;
         this.bossSpawned = data.boss;
         this.player = new Player(0, 0);
         this.player.deserialize(data.player);
+
+        // Handle location
+        if (data.atHome) {
+            // Force enter home
+            this.enterHome(true);
+        } else {
+            // Ensure on world map
+            this.exitHome(true);
+            this.player.x = data.player.x;
+            this.player.y = data.player.y;
+        }
     },
 
     loadWorld(resetPlayer = true) {
-        this.map = new TileMap(MAP_SIZE, MAP_SIZE);
-        this.entities = [];
-        this.particles = [];
-        this.projectiles = [];
+        // Generate World Map
+        this.maps.world = new TileMap(MAP_SIZE, MAP_SIZE, 'world');
+        this.worldEntities = [];
 
-        if (resetPlayer) {
-            const startX = (MAP_SIZE / 2) * TILE_SIZE;
-            const startY = (MAP_SIZE / 2) * TILE_SIZE;
-            this.player = new Player(startX, startY);
-            // Spawn safe zone bed
-            this.entities.push(new Entity(startX - 50, startY - 50, 40, 60, 'bed'));
-        }
+        // Generate Home Map
+        this.maps.home = new TileMap(20, 20, 'home');
+        this.homeEntities = [];
 
-        // Populate World
+        // Setup World Entities
+        const houseX = (MAP_SIZE / 2) * TILE_SIZE;
+        const houseY = (MAP_SIZE / 2) * TILE_SIZE;
+        this.worldEntities.push(new Entity(houseX - 40, houseY - 40, 80, 80, 'house')); // Large house
+
         for (let i = 0; i < 300; i++) {
             let x = Math.floor(Math.random() * MAP_SIZE) * TILE_SIZE;
             let y = Math.floor(Math.random() * MAP_SIZE) * TILE_SIZE;
-            if (this.map.isSolid(x, y) || Math.hypot(x - (MAP_SIZE / 2) * TILE_SIZE, y - (MAP_SIZE / 2) * TILE_SIZE) < 400) continue;
+            if (this.maps.world.isSolid(x, y) || Math.hypot(x - houseX, y - houseY) < 400) continue;
 
             const r = Math.random();
-            if (r > 0.96) this.entities.push(new Enemy(x, y, 'Boar'));
-            else if (r > 0.93) this.entities.push(new Enemy(x, y, 'Viper'));
-            else if (r > 0.88) this.entities.push(new Enemy(x, y, 'Rat'));
-            else if (r > 0.82) this.entities.push(new ItemEntity(x, y, 'spirit_jade'));
-            else if (r > 0.65) this.entities.push(new ItemEntity(x, y, 'berry'));
+            if (r > 0.96) this.worldEntities.push(new Enemy(x, y, 'Boar'));
+            else if (r > 0.93) this.worldEntities.push(new Enemy(x, y, 'Viper'));
+            else if (r > 0.88) this.worldEntities.push(new Enemy(x, y, 'Rat'));
+            else if (r > 0.82) this.worldEntities.push(new ItemEntity(x, y, 'spirit_jade'));
+            else if (r > 0.65) this.worldEntities.push(new ItemEntity(x, y, 'berry'));
         }
+
+        // Setup Home Entities
+        // Bed
+        this.homeEntities.push(new Entity(5 * TILE_SIZE, 5 * TILE_SIZE, 40, 60, 'bed'));
+        // Exit Door
+        this.homeEntities.push(new Entity(10 * TILE_SIZE - 20, 19 * TILE_SIZE - 10, 40, 30, 'exit'));
+
+        // Start in World
+        this.map = this.maps.world;
+        this.entities = this.worldEntities;
+        this.atHome = false;
+
+        if (resetPlayer) {
+            this.player = new Player(houseX, houseY + 100);
+        }
+    },
+
+    enterHome(force = false) {
+        if (this.atHome && !force) return;
+
+        // Save World State
+        this.worldEntities = this.entities;
+        this.lastWorldPos = { x: this.player.x, y: this.player.y };
+
+        // Switch to Home
+        this.atHome = true;
+        this.map = this.maps.home;
+        this.entities = this.homeEntities;
+
+        // Place Player at entrance (inside)
+        this.player.x = 10 * TILE_SIZE; // Middle
+        this.player.y = 18 * TILE_SIZE; // Near bottom door
+        this.player.facing = -1; // ?
+
+        this.addLog("Entered Home", "info");
+    },
+
+    exitHome(force = false) {
+        if (!this.atHome && !force) return;
+
+        // Save Home State
+        this.homeEntities = this.entities;
+
+        // Switch to World
+        this.atHome = false;
+        this.map = this.maps.world;
+        this.entities = this.worldEntities;
+
+        // Restore Player Position
+        if (this.lastWorldPos) {
+            this.player.x = this.lastWorldPos.x;
+            this.player.y = this.lastWorldPos.y + 50; // Offset a bit
+        } else {
+            this.player.x = (MAP_SIZE / 2) * TILE_SIZE;
+            this.player.y = (MAP_SIZE / 2) * TILE_SIZE + 100;
+        }
+        this.addLog("Left Home", "info");
+    },
+
+    startSleep() {
+        this.sleeping = true;
+        this.sleepTimer = 0;
+        document.getElementById('modal').style.display = 'none'; // Ensure no modals
+        this.addLog("You drift into cultivation...", "info");
+    },
+
+    stopSleep() {
+        if (!this.sleeping) return;
+        this.sleeping = false;
+        this.finishRest();
+    },
+
+    finishRest() {
+        // Apply level up logic here from old "rest()"
+        let msg = "You wake up refreshed.<br>";
+        let gains = [];
+        for (let s in this.player.stress) {
+            if (this.player.stress[s] > 10) {
+                let g = Math.floor(this.player.stress[s] / 10);
+                this.player.stats[s] += g; this.player.stress[s] = 0;
+                if (g > 0) gains.push(`${s.toUpperCase()} +${g}`);
+            }
+        }
+        if (gains.length) msg += "<span style='color:#2ecc71'>" + gains.join(', ') + "</span><br>";
+
+        let next = REALMS[this.player.realm + 1];
+        let score = this.player.stats.str + this.player.stats.def + this.player.stats.spd + this.player.stats.wis;
+        if (next && score >= next.req) {
+            this.player.realm++;
+            msg += `<br><strong style='color:#f1c40f'>BREAKTHROUGH: ${next.name}</strong>`;
+            this.player.vitals.maxHp += 50; this.player.vitals.maxQi += 20;
+            if (this.player.realm === 4) this.spawnBoss();
+        }
+
+        // Apply
+        this.player.vitals.hp = this.player.vitals.maxHp;
+        this.player.vitals.stam = this.player.vitals.maxStam;
+        this.player.vitals.qi = this.player.vitals.maxQi;
+
+        // Unlock skills
+        for (let i = 0; i < 3; i++) {
+            if (this.player.realm >= i + 1) document.getElementById(`skill-${i + 1}`).classList.add('unlocked');
+        }
+
+        this.saveGame();
+        this.showModal("Cultivation Complete", msg);
     },
 
     toggleInventory() {
@@ -184,10 +322,7 @@ const Game = {
         RECIPES.forEach(r => {
             const btn = document.createElement('button');
             btn.className = 'craft-btn';
-
-            // Generate cost string
             let costStr = Object.entries(r.cost).map(([k, v]) => `${v} ${ITEMS[k].name}`).join(', ');
-
             btn.innerHTML = `<span>${r.name}</span><span>${costStr}</span>`;
             btn.onclick = () => Game.craft(r);
             list.appendChild(btn);
@@ -202,14 +337,12 @@ const Game = {
         }
         for (let mat in recipe.cost) this.player.removeItem(mat, recipe.cost[mat]);
 
-        // Check if equipment
         const itemDef = ITEMS[recipe.id];
         if (itemDef.type === 'equip') {
             this.player.equip(recipe.id);
         } else {
             this.player.addItem(recipe.id, 1);
         }
-
         this.addLog(`Crafted ${itemDef.name}`, "gain");
         this.renderInventory();
     },
@@ -250,6 +383,25 @@ const Game = {
     update(dt) {
         if (this.paused) return;
 
+        if (this.sleeping) {
+            // Deep cultivation state
+            this.gameTime += dt * 0.5; // Fast forward time
+            this.player.vitals.hp = Math.min(this.player.vitals.maxHp, this.player.vitals.hp + 20 * dt);
+            this.player.vitals.stam = Math.min(this.player.vitals.maxStam, this.player.vitals.stam + 20 * dt);
+
+            // Visual feedback
+            if (Math.random() < 0.1) this.addFloater(this.player.x, this.player.y, "Zzz...", "#fff", 10);
+
+            // Stop if fully healed
+            if (this.player.vitals.hp >= this.player.vitals.maxHp && this.player.vitals.stam >= this.player.vitals.maxStam) {
+                this.stopSleep();
+            }
+
+            // Cycle day
+            if (this.gameTime >= 24) { this.gameTime = 0; this.day++; }
+            return;
+        }
+
         // Time Cycle
         this.gameTime += dt * 0.1;
         if (this.gameTime >= 24) { this.gameTime = 0; this.day++; this.saveGame(); }
@@ -258,7 +410,7 @@ const Game = {
         document.getElementById('clock-display').innerText = `DAY ${this.day} - ${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 
         // Spawns
-        if (this.gameTime > 20 || this.gameTime < 4) {
+        if (!this.atHome && (this.gameTime > 20 || this.gameTime < 4)) {
             if (Math.random() < 0.005 && this.entities.length < 80) {
                 const angle = Math.random() * Math.PI * 2;
                 const sx = this.player.x + Math.cos(angle) * 700;
@@ -312,7 +464,6 @@ const Game = {
         const all = [...this.entities, this.player, ...this.projectiles];
         all.sort((a, b) => (a.y + a.h) - (b.y + b.h));
 
-        // Draw trails behind entities
         this.trails.forEach(t => t.draw(this.ctx));
 
         all.forEach(e => e.draw(this.ctx));
@@ -326,7 +477,7 @@ const Game = {
             this.ctx.globalAlpha = 1;
         });
 
-        // Mouse Cursor
+        // Mouse
         let mx = this.input.mouse.x + this.camera.x;
         let my = this.input.mouse.y + this.camera.y;
         this.ctx.strokeStyle = 'rgba(255,255,255,0.3)';
@@ -336,6 +487,18 @@ const Game = {
         this.ctx.restore();
 
         this.drawLighting();
+
+        // Sleep Overlay
+        if (this.sleeping) {
+            this.ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            this.ctx.fillRect(0, 0, this.width, this.height);
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = '30px "Press Start 2P"';
+            this.ctx.fillText("MEDITATING...", this.width / 2 - 150, this.height / 2);
+            this.ctx.font = '12px "Press Start 2P"';
+            this.ctx.fillText("Press WASD to wake up", this.width / 2 - 100, this.height / 2 + 40);
+        }
+
         this.drawMinimap();
     },
 
@@ -344,7 +507,13 @@ const Game = {
         const w = this.miniCanvas.width, h = this.miniCanvas.height;
         ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
 
-        // Scale factor: Minimap sees 2000x2000 area around player
+        if (this.atHome) {
+            ctx.fillStyle = '#fff';
+            ctx.font = '10px Arial';
+            ctx.fillText("HOME", 40, 50);
+            return;
+        }
+
         const range = 1000;
         const px = this.player.x, py = this.player.y;
 
@@ -357,8 +526,34 @@ const Game = {
             if (Math.abs(dx) < w / 2 && Math.abs(dy) < h / 2) {
                 if (e.type === 'enemy') { ctx.fillStyle = '#ff4757'; ctx.fillRect(dx - 2, dy - 2, 4, 4); }
                 else if (e.type === 'item') { ctx.fillStyle = '#2ecc71'; ctx.fillRect(dx - 1, dy - 1, 2, 2); }
+                else if (e.type === 'house') { ctx.fillStyle = '#00d2d3'; ctx.fillRect(dx - 3, dy - 3, 6, 6); }
             }
         });
+
+        // House Direction Indicator
+        const house = this.worldEntities.find(e => e.type === 'house');
+        if (house) {
+            const dx = (house.x - px);
+            const dy = (house.y - py);
+            const dist = Math.hypot(dx, dy);
+
+            // If House is out of minimap range
+            if (dist > range) {
+                const angle = Math.atan2(dy, dx);
+                // Draw at edge circle r = w/2 - 10
+                const r = w / 2 - 10;
+                const ax = Math.cos(angle) * r;
+                const ay = Math.sin(angle) * r;
+
+                ctx.fillStyle = '#00d2d3';
+                ctx.beginPath();
+                // Triangle pointing outward
+                ctx.moveTo(ax, ay);
+                ctx.lineTo(ax - Math.cos(angle - 0.5) * 6, ay - Math.sin(angle - 0.5) * 6);
+                ctx.lineTo(ax - Math.cos(angle + 0.5) * 6, ay - Math.sin(angle + 0.5) * 6);
+                ctx.fill();
+            }
+        }
 
         // Player Dot
         ctx.fillStyle = '#fff';
@@ -372,6 +567,9 @@ const Game = {
 
     drawLighting() {
         let hour = this.gameTime;
+        // Don't draw darkness in home?
+        if (this.atHome) return;
+
         let alpha = 0;
 
         if (hour >= 20 || hour < 4) alpha = 0.85;
