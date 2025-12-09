@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aetheria v5.5: Daoist Ascending</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="ui-layer">
+            <div id="top-bar">
+                <div id="vitals-panel">
+                    <div class="stat-bar-container hp">
+                        <div class="bar-label"><span>HEALTH</span><span id="val-hp">100/100</span></div>
+                        <div class="bar-track">
+                            <div class="bar-fill" id="fill-hp" style="width: 100%"></div>
+                        </div>
+                    </div>
+                    <div class="stat-bar-container stamina">
+                        <div class="bar-label"><span>STAMINA</span><span id="val-stamina">100/100</span></div>
+                        <div class="bar-track">
+                            <div class="bar-fill" id="fill-stamina" style="width: 100%"></div>
+                        </div>
+                    </div>
+                    <div class="stat-bar-container qi">
+                        <div class="bar-label"><span>QI (MANA)</span><span id="val-qi">0/50</span></div>
+                        <div class="bar-track">
+                            <div class="bar-fill" id="fill-qi" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="stat-bar-container hunger">
+                        <div class="bar-label"><span>HUNGER</span><span id="val-hunger">0/100</span></div>
+                        <div class="bar-track">
+                            <div class="bar-fill" id="fill-hunger" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="right-panel">
+                    <div id="minimap-container">
+                        <canvas id="minimap-canvas" width="150" height="150"></canvas>
+                    </div>
+                    <div id="info-panel">
+                        <div id="clock-display">DAY 1 - 08:00</div>
+                        <div id="realm-display">MORTAL REALM</div>
+                        <div class="controls-hint">
+                            [W,A,S,D] Move | [L-CLICK] Action<br>
+                            [SPACE] Interact | [F] Meditate<br>
+                            [I] Spatial Bag | [R] Rest/Save
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="stats-overlay">
+                <div style="border-bottom: 1px solid #444; margin-bottom: 8px; color: #ccc; font-size: 11px;">
+                    CULTIVATION BASE</div>
+                <div class="stat-line"><span>STR (Damage):</span> <span id="stat-str" class="stat-hl">5</span></div>
+                <div class="stat-line"><span>DEF (Resist):</span> <span id="stat-def" class="stat-hl">5</span></div>
+                <div class="stat-line"><span>SPD (Motion):</span> <span id="stat-spd" class="stat-hl">5</span></div>
+                <div class="stat-line"><span>WIS (Qi/Crit):</span> <span id="stat-wis" class="stat-hl">1</span></div>
+
+                <div class="gear-section">
+                    <div class="gear-slot">WEAPON: <span id="gear-wep" style="color:#fff">None</span></div>
+                    <div class="gear-slot">ARMOR: <span id="gear-arm" style="color:#fff">None</span></div>
+                </div>
+            </div>
+
+            <div id="bottom-hud">
+                <div id="log-panel"></div>
+
+                <div id="skill-bar">
+                    <div class="skill-slot" id="skill-1" title="Qi Blast">
+                        <div class="key-hint">1</div>
+                        <span style="color:#e74c3c">BLAST</span>
+                    </div>
+                    <div class="skill-slot" id="skill-2" title="Cloud Step">
+                        <div class="key-hint">2</div>
+                        <span style="color:#00cec9">STEP</span>
+                    </div>
+                    <div class="skill-slot" id="skill-3" title="Star Nova">
+                        <div class="key-hint">3</div>
+                        <span style="color:#f1c40f">NOVA</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="inventory-modal">
+            <div class="modal-header">
+                <span style="color:var(--accent); font-size:16px;">SPATIAL BAG</span>
+                <span style="cursor:pointer; color:#777; font-size: 12px;" onclick="Game.toggleInventory()">[ CLOSE
+                    ]</span>
+            </div>
+            <div class="inv-layout">
+                <div id="inv-grid"></div>
+                <div id="crafting-panel">
+                    <div
+                        style="color:#888; margin-bottom:15px; font-size:10px; border-bottom: 1px solid #333; padding-bottom: 5px;">
+                        ALCHEMY & FORGING</div>
+                    <div id="crafting-list"></div>
+                </div>
+            </div>
+            <div id="tooltip">
+                <div class="tt-title"></div>
+                <div class="tt-type"></div>
+                <div class="tt-desc"></div>
+            </div>
+        </div>
+
+        <div id="modal">
+            <h1 id="modal-title" style="color:var(--accent); font-size:20px; margin-bottom:20px;"></h1>
+            <div id="modal-content" style="font-size:10px; line-height:1.8; color:#ccc;"></div>
+            <button class="action-btn" id="modal-btn">CONTINUE</button>
+        </div>
+    </div>
+
+    <script src="js/constants.js"></script>
+    <script src="js/graphics.js"></script>
+    <script src="js/classes.js"></script>
+    <script src="js/game.js"></script>
+
+</body>
+
+</html>
